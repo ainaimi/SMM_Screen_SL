@@ -91,7 +91,9 @@ momi_recipe_splines <- momi_recipe %>%
   step_center(all_numeric(), -all_outcomes()) %>%
   step_scale(all_numeric(),-all_outcomes()) %>% 
   step_dummy(all_nominal(), -all_outcomes(), one_hot = FALSE) %>% 
-  step_bs(birthweight, delwksgt, momiculos, momhgt, mobadmwt_g, momage, apgar1, apgar5, niculos)
+  step_bs(birthweight, delwksgt, momiculos, momhgt, mobadmwt_kg, momage, apgar1, apgar5, niculos)
 
 prep_momi_splines <- prep(momi_recipe_splines, training = td)
 train_momi_splines <- bake(prep_momi_splines, new_data = td)
+
+saveRDS(train_momi_splines, file = "\\\\136.142.117.70\\Studies$\\Bodnar Abby\\Severe Maternal Morbidity\\Data\\baked_train_momi_withsplines.rds")

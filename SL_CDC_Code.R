@@ -2,7 +2,8 @@
 
 # load the relevant packages
 packages <- c("dplyr","tidyverse","ggplot2","SuperLearner","VIM","recipes","resample","caret","SuperLearner",
-              "data.table","nnls","mvtnorm","ranger","xgboost","splines","Matrix","xtable","pROC","arm","polspline","ROCR","cvAUC")
+              "data.table","nnls","mvtnorm","ranger","xgboost","splines","Matrix","xtable","pROC","arm",
+              "polspline","ROCR","cvAUC", "KernelKnn", "gam")
 for (package in packages) {
   if (!require(package, character.only=T, quietly=T)) {
     install.packages(package,repos='http://lib.stat.cmu.edu/R/CRAN') 
@@ -14,11 +15,12 @@ setwd("\\\\136.142.117.70\\Studies$\\Bodnar Abby\\Severe Maternal Morbidity\\Dat
 
 # Read data
 D <- readRDS("baked_train_momi_20200615.rds")
+D_splines <- readRDS("baked_train_momi_withsplines.rds")
 # Just creating a smaller data set for coding purposes -- delete later
-D <- D %>% dplyr::select(c(ch_smmtrue, married_X1, married_X99, anesth_re_No, anesth_re_Yes, birthweight, induced_No, induced_Yes))
-D$R1 <- runif(693, -1, 1)
-D$R2 <- runif(693, -10, 10)
-D$R3 <- runif(693, 0, 1)
+#D <- D %>% dplyr::select(c(ch_smmtrue, married_X1, married_X99, anesth_re_No, anesth_re_Yes, birthweight, induced_No, induced_Yes))
+#D$R1 <- runif(693, -1, 1)
+#D$R2 <- runif(693, -10, 10)
+#D$R3 <- runif(693, 0, 1)
 
 # Specify the number of folds for V-fold cross-validation
 folds=10
@@ -27,21 +29,15 @@ folds=10
 # Hand-coding Super Learner
 #-------------------------------------------------------------------------------
 ## 1: split data into 10 groups for 10-fold cross-validation 
-head(D,10)
 splt<-split(D,1:folds)
-# view the first 6 observations in the first fold
-head(splt[[1]])
 
-#----------------------------
-## 2: the lapply() function is an efficient way to rotate through the folds to execute:
-#	(a) set the ii-th fold to be the validation set; (b) fit each algorithm on the training set; 
-#  (c) obtain the predicted outcomes for observations in the validation set;
-#  (d) estimate the estimated risk (1-AUC) for each fold
-#
+splt_splines <- split(D_splines, 1:folds)
+
+## 2: Fitting individual algorithms on the training set (but not the ii-th validation set)
 set.seed(123)
-## 2b: fit each algorithm on the training set (but not the ii-th validation set)
+# bayesglm with defaults
 m1<-lapply(1:folds,function(ii) bayesglm(formula=ch_smmtrue~.,data=do.call(rbind,splt[-ii]),family="binomial")) #bayesglm
-#random forest (ranger)
+#random forest (ranger) with a range of tuning parameters
 m2 <- lapply(1:folds, function(ii) ranger(ch_smmtrue~., data=do.call(rbind,splt[-ii]), num.trees = 500, mtry = 2, min.node.size = 10, replace = T))
 m3 <- lapply(1:folds, function(ii) ranger(ch_smmtrue~., data=do.call(rbind,splt[-ii]), num.trees = 500, mtry = 3, min.node.size = 10, replace = T))
 m4 <- lapply(1:folds, function(ii) ranger(ch_smmtrue~., data=do.call(rbind,splt[-ii]), num.trees = 500, mtry = 4, min.node.size = 10, replace = T))
@@ -58,43 +54,45 @@ m13 <- lapply(1:folds, function(ii) ranger(ch_smmtrue~., data=do.call(rbind,splt
 m14 <- lapply(1:folds,function(ii) mean(rbindlist(splt[-ii])$ch_smmtrue))
 #glm
 m15 <- lapply(1:folds, function(ii) glm(ch_smmtrue~., data=do.call(rbind,splt[-ii])))
-#gams
-m16 <- lapply(1:folds,function(ii) gam(ch_smmtrue~., family="binomial",data=rbindlist(splt[-ii])))
+#gams - make sure to use splt_splines 
+m16 <- lapply(1:folds,function(ii) gam(ch_smmtrue~., family="binomial",data=rbindlist(splt_splines[-ii])))
 
 #xgboost
-sparse.matrix <- sparse.model.matrix(ch_smmtrue ~ ., data = splt[-ii])
-mxx <- lapply(1:folds, function(ii) xgboost(data = sparse.model.matrix(splt[-ii]), label = splt[-ii]$ch_smmtrue, ntrees = 200, max_depth = 4, shrinkage = 0.01 ))
-# xgboost needs a sparse matrix, not a matrix matrix 
-# sparse_matrix <- sparse.model.matrix(response ~ .-1, data = campaign) 
-# sometimes dependencies won't work for xgboost 
-# compiler libraries might need to be installed 
-# google how to use xgboost in r - first try to get a tutorial running on this local computer, then adapt tutorial data to my data 
-# label -- tell it the label of the column in the 
-# xgb <- xgboost(data = data.matrix(X[,-1]), 
-# label = y, 
-#eta = 0.1,
-#max_depth = 15, 
-#nround=25, 
-#subsample = 0.5,
-#colsample_bytree = 0.5,
-#seed = 1,
-#eval_metric = "merror",
-#objective = "multi:softprob",
-#num_class = 12,
-#nthread = 3
-#)
+# can put everything into an xgb.Dmatrix and use xgb.cv?
+xgb_dat <- D %>% dplyr::select(-c(ch_smmtrue))
+xgb_dat <- as.matrix(xgb_dat)
+xgb_label <- D %>% dplyr::select(c(ch_smmtrue))
+xgb_label <- as.matrix(xgb_label)
+dtrain <- xgb.DMatrix(data =xgb_dat, label = xgb_label)
+mx1 <- xgboost(data = xgb_dat, label = xgb_label, eta = 0.1, max_depth = 15, nround = 25, objective="binary:logistic")
+
+mx2 <- xgb.cv(data = xgb_dat, label = xgb_label, objective = "binary:logistic",
+              nfold = 10, nround = 25, eta = 0.1, max_depth = 15)
+
+mx2 <- xgb.cv(data = dtrain, objective = "binary:logistic",
+              nfold = 10, nround = 25, eta = 0.1, max_depth = 15)
+# These both work. I don't know how important it is to do the cross-validation manually.
+
+mxx <- lapply(1:folds, function(ii) xgboost(data=as.matrix(splt[[-ii]][,-11]), label=as.matrix(splt[[-ii]][,11]), eta = 0.1, 
+                                           max_depth = 15, nround=25))
+# the above is what i originally tried, it doesn't work
 
 #k-nearest-neighbors
-# would it help to make two lists? for splt
 mxx <- lapply(1:folds, function(ii) KernelKnn(do.call(rbind,splt[-ii][,-11]), TEST_data = NULL,do.call(rbind,splt[-ii][,11]), k=5))
 
 mxx <- lapply(1:folds, function(ii) knnreg(do.call(rbind,splt[-ii]), do.call(rbind,splt[-ii][,11]), k = 5))
 fit <- knnreg(D, D$ch_smmtrue, k = 5)
+# Still getting error about incorrect number of dimensions; it's related to use of the extract operator []
+# ALso getting an error if I double-bracket ii (splt[[ii]]): attempt to select more than one element in integerOneIndex
 
 
 #glmnet
-mxx <- lapply(1:folds, function(ii) glmnet(do.call(rbind,splt[-ii][,11]), do.call(rbind,splt[-ii][,-11]),  alpha = 0))
-
+mxx <- lapply(1:folds, function(ii) glmnet(do.call(rbind,splt[-ii][,-11]), do.call(rbind,splt[-ii][,11]),  alpha = 0))
+# Also getting an incorrect # of dimensions here 
+# There's a cv.glmnet option, should I use that? 
+mx4 <- glmnet(xgb_dat, xgb_label, family=c("binomial"))
+mx5 <- cv.glmnet
+# these above both work 
 
 #CDC algorithm
 
