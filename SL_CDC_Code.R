@@ -16,6 +16,7 @@ setwd("\\\\136.142.117.70\\Studies$\\Bodnar Abby\\Severe Maternal Morbidity\\Dat
 # Read data
 D <- readRDS("baked_train_momi_20200615.rds")
 D_splines <- readRDS("baked_train_momi_withsplines.rds")
+D_knn <- D %>% mutate(smm_knn = ch_smmtrue + 1) %>% dplyr::select(c(-ch_smmtrue))
 # Just creating a smaller data set for coding purposes -- delete later
 D <- D %>% dplyr::select(c(ch_smmtrue, married_X1, married_X99, anesth_re_No, anesth_re_Yes, birthweight, induced_No, induced_Yes))
 D$R1 <- runif(693, -1, 1)
@@ -26,51 +27,14 @@ D$R3 <- runif(693, 0, 1)
 folds=10
 
 #-------------------------------------------------------------------------------
-# Code variable selection functions?
-# Better to do it up here?
-# Adapting these from SuperLearner source code... but I'm not sure how to integrate
-# everything into lapply
-#-------------------------------------------------------------------------------
-screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
-                        minPvalue = 0.1, minscreen = 2) 
-  {
-  listp <- apply(X, 2, 
-                 function(x,Y,method) {
-                      ifelse(var(x) <= 0, 1, cor.test(x, y=Y, method=method)$p.value)
-                  },Y=Y, method=method)
-  whichVariable <- (listp <= minPvalue)
-  if(sum(whichVariable)<minscreen){
-    warning('number of variables with p-value < minPvalue is less than minscreen ')
-    whichVariable[rank(listp)<=minscreen] <- TRUE
-  }
-  return(whichVariable)
-}
-
-screen.glmnet <- function(Y, X, family, alpha = 1,
-                          minscreen = 2, nfolds = 10, nlambda = 100){
-  if(!is.matrix(X)){
-    X <- model.matrix(~ -1 + ., X)
-  }
-  fitCV <- glmnet::cv.glmnet(x=X, y=Y, lambda=NULL, type.measure='deviance',
-                             nfolds=nfolds, family=family$family, alpha=alpha, nlambda=nlambda)
-  whichVariable <- (as.numeric(coef(fitCV$glmnet.fit, 
-                                    s=fitCV$lambda.min))[-1]!=0)
-  if(sum(whichVariable) < minscreen){
-    sumCoef <- apply(as.matrix(fitCV$glmnet.fit$beta),2,
-                     function(x) sum((x!=0)))
-    newCut <- which.max(sumCoef >= minscreen)
-    whichVariable <- (as.matrix(fitCV$glmnet.fit$beta)[, newCut] != 0)
-  }
-  return(whichVariable)
-}
-
-#-------------------------------------------------------------------------------
 # Hand-coding Super Learner
 #------------------------------------------------------------------------------2-
 ## 1: split data into 10 groups for 10-fold cross-validation 
 splt<-split(D,1:folds)
 
 splt_splines <- split(D_splines, 1:folds)
+
+splt_knn <- split(D_knn, 1:folds)
 
 ## 2: Fitting individual algorithms on the training set (but not the ii-th validation set)
 set.seed(123)
@@ -97,54 +61,21 @@ m15 <- lapply(1:folds, function(ii) glm(ch_smmtrue~., data=do.call(rbind,splt[-i
 m16 <- lapply(1:folds,function(ii) gam(ch_smmtrue~., family="binomial",data=rbindlist(splt_splines[-ii])))
 
 #xgboost
-# can put everything into an xgb.Dmatrix and use xgb.cv?
-xgb_dat <- D %>% dplyr::select(-c(ch_smmtrue))
-xgb_dat <- as.matrix(xgb_dat)
-xgb_label <- D %>% dplyr::select(c(ch_smmtrue))
-xgb_label <- as.matrix(xgb_label)
-dtrain <- xgb.DMatrix(data =xgb_dat, label = xgb_label)
-mx1 <- xgboost(data = xgb_dat, label = xgb_label, eta = 0.1, max_depth = 15, nround = 25, objective="binary:logistic")
-
-mx2 <- xgb.cv(data = xgb_dat, label = xgb_label, objective = "binary:logistic",
-              nfold = 10, nround = 25, eta = 0.1, max_depth = 15)
-
-mx3 <- xgb.cv(data = dtrain, objective = "binary:logistic",
-              nfold = 10, nround = 25, eta = 0.1, max_depth = 15)
-# These both work. I don't know how important it is to do the cross-validation manually.
-
-
-mx4 <- lapply(1:folds, function(ii) xgboost(data = as.matrix(do.call(rbind,splt[-ii][,-11])), 
-                                            label = as.matrix(do.call(rbind,splt[-ii][,11]),
+m17 <- lapply(1:folds, function(ii) xgboost(data = as.matrix(do.call(rbind,splt[-ii])[,-11]), 
+                                            label = as.matrix(do.call(rbind,splt[-ii])[,11]),
                                             eta = 0.1,
                                             max_depth = 15,
                                             nround = 15,
-                                            objective = "binary:logistic")))
-# the above is what i originally tried, it doesn't work. not sure how crucial it is to manually code the cross-validation.
-
-#k-nearest-neighbors
-# because the extract operator [] is giving me tons of problems, processing the data first:
-D <- D %>% mutate(smm_knn = ch_smmtrue + 1)
-D_mat <- D %>% dplyr::select(c(-ch_smmtrue, -smm_knn))
-D_lab <- D %>% dplyr::select(c(smm_knn))
-D_lab <- data.frame(D_lab)
-
-splt_mat <- split(D_mat, 1:folds)
-splt_lab <- split(D_lab, 1:folds)
-mxx <- lapply(1:folds, function(ii) KernelKnn(do.call(rbind,splt[-ii]), TEST_data = NULL, xgb_label, k=5))
-mxx <- lapply(1:folds, function(ii) KernelKnn(do.call(rbind,splt_mat[-ii]), TEST_data = NULL, do.call(rbind, splt_lab[-ii]), k=5))
-mxx <- lapply(1:folds, function(ii) knnreg(do.call(rbind,splt[-ii]), do.call(rbind,splt[-ii][,11]), k = 5))
-fit <- knnreg(D, D$ch_smmtrue, k = 5)
-# Still getting error about incorrect number of dimensions; it's related to use of the extract operator []
-# ALso getting an error if I double-bracket ii (splt[[ii]]): attempt to select more than one element in integerOneIndex
-
+                                            objective = "binary:logistic"))
 
 #glmnet
-mxx <- lapply(1:folds, function(ii) glmnet(do.call(rbind,splt[-ii][,-11]), do.call(rbind,splt[-ii][,11]),  alpha = 0))
-# Also getting an incorrect # of dimensions here 
-# There's a cv.glmnet option, should I use that? 
-mx4 <- glmnet(xgb_dat, xgb_label, family=c("binomial"))
-mx5 <- cv.glmnet
-# these above both work 
+m18 <- lapply(1:folds, function(ii) glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0))
+
+# k-neaest neighbords 
+mxx <- lapply(1:folds, function(ii) KernelKnn(do.call(rbind,splt_knn[-ii])[,-11],
+              TEST_data = NULL, 
+              as.vector(do.call(rbind,splt_knn[-ii])[,11]),
+              k=5))
 
 #CDC algorithm
 mxx <- 
