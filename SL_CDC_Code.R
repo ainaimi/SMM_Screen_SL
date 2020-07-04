@@ -105,28 +105,31 @@ m41 <- lapply(1:folds, function(ii) KernelKnn(do.call(rbind,splt_knn[-ii])[,-196
 #-------------------------------------------------------------------------------------------------------------------------------------------
 ## 2c: obtain the predicted probability of the outcome for observation in the ii-th validation set
 
-#bayesglm
+#bayesglm - i don't understand this prediction object; list of 10
 p1<-lapply(1:folds,function(ii) predict(m1[[ii]],newdata=rbindlist(splt[ii]),type="response"))
-#ranger
+#ranger - here, it's a list, with predictions in each list object: p2[[1]]$predictions
 p2<-lapply(1:folds,function(ii) predict(m2[[ii]],data=rbindlist(splt[ii])))
-
-#mean - m14. below doesn't work because mean is just a list of numbers
+#mean - m14. below doesn't work because mean is just a list of numbers. if this is just the mean in each fold, do we assign this mean value to every observation in each fold?
 p14 <- lapply(1:folds, function(ii) predict(m14[[ii]], data=rbindlist(splt[[ii]])))
 
-#glm 
+#glm: this also is a list of 10
 p15 <- lapply(1:folds, function(ii) predict(m15[[ii]], data = rbindlist(splt[[ii]])))
 
-#gams - m16
-p16 <- lapply(1:folds, function(ii) predict(m16[[ii]], data = rbindlist(splt[[ii]])))
+#gams - m16: also a list of 10
+p16 <- lapply(1:folds, function(ii) predict(m16[[ii]], data = rbindlist(splt_splines[[ii]])))
 
 #xgboost - m17, below doesn't work: Item 1 of input is not a data.frame, data.table, or list
-p17 <- lapply(1:folds, function(ii) predict(m17[[ii]], newdata = rbindlist(splt[[ii]])))
+# single bracket around splt[ii] gets rid of that error but now: xgb.DMatrix does not support construction from list
+# putting as.matrix around the second argument fixes(?) that error, but now "feature names stored in 'object' and 'newdata' are different!
+# i need to make sure the names *and order* in the object and splt are the same... how?
+p17 <- lapply(1:folds, function(ii) predict(m17[[ii]], as.matrix(rbindlist(splt[ii])))) 
 
 #glmnet - m35, below doesn't work: "need to supply a value for newx"
-p35 <- lapply(1:folds, function(ii) predict(m35[[ii]], data = rbindlist(splt[[ii]])))
+# did the same thing as above because "newx" must be a matrix. Now: cholmod error 'X and/or Y have wrong dimensions'
+p35 <- lapply(1:folds, function(ii) predict(m35[[ii]], as.matrix(rbindlist(splt[ii]))))
 
 #knn - m41. doesn't work. prediction for knn is weird 
-p41 <- lapply(1:folds, function(ii) predict(m41[[ii]], data = rbindlist(splt[[ii]])))
+p41 <- lapply(1:folds, function(ii) predict(m41[[ii]], rbindlist(splt_knn[ii])))
 
 # update dataframe 'splt' so that column1 is the observed outcome (y)
 #   column2 is the CV-predicted probability of the outcome from bayesglm
