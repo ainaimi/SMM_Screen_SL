@@ -89,8 +89,9 @@ m41 <- lapply(1:folds, function(ii) xgboost(data = as.matrix(do.call(rbind,splt[
 m42 <- lapply(1:folds, function(ii) xgboost(data = as.matrix(do.call(rbind,splt[-ii])[,-11]),label = as.matrix(do.call(rbind,splt[-ii])[,11]), max_depth = 5, ntrees=1000, shrinkage=0.0001, nrounds = 15, objective = "binary:logistic", verbose = 0))
 m43 <- lapply(1:folds, function(ii) xgboost(data = as.matrix(do.call(rbind,splt[-ii])[,-11]),label = as.matrix(do.call(rbind,splt[-ii])[,11]), max_depth = 6, ntrees=1000, shrinkage=0.0001, nrounds = 15, objective = "binary:logistic", verbose = 0))
 
-#glmnet
-m44 <- lapply(1:folds, function(ii) glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0))
+#glmnet - also vary lambdas? 
+#cv.glmnet will find the optimal lambda for you... can you incorporate cross-validation of lambda into CV we're already doing 
+m44 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0, family="binomial"))
 m45 <- lapply(1:folds, function(ii) glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0.2))
 m46 <- lapply(1:folds, function(ii) glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0.4))
 m47 <- lapply(1:folds, function(ii) glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0.6))
@@ -120,7 +121,8 @@ p15 <- lapply(1:folds, function(ii) predict(m15[[ii]], data = rbindlist(splt[ii]
 
 #gams - m16
 # per predict.Gam documentation, if I take out the data argument and just indicate type, this works. I don't know if the result makes sense, though.
-p16 <- lapply(1:folds, function(ii) predict(m16[[ii]], type="response"))
+# there has to be a way to supply data (fold) 
+p16 <- lapply(1:folds, function(ii) predict(m16[[ii]], newdata=rbindlist(splt_splines[ii]), type="response"))
 
 #xgboost - m17, below doesn't work: Item 1 of input is not a data.frame, data.table, or list
 # single bracket around splt[ii] gets rid of that error but now: xgb.DMatrix does not support construction from list
@@ -134,6 +136,10 @@ p17 <- lapply(1:folds, function(ii) predict(m17[[ii]], as.matrix(rbindlist(splt[
 # if I similarly take out column 11 from splt[[ii]], this also works 
 # now I don't understand the p44 object really...
 p44 <- lapply(1:folds, function(ii) predict(m44[[ii]], newx = as.matrix(rbindlist(splt[ii])[,-11])))
+p44 <- lapply(1:folds, function(ii) predict(m44[[ii]], newx = as.matrix(rbindlist(splt[ii])[,-11]), s="lambda.min", type="response"))
+p44 <- lapply(1:folds, function(ii) predict(m44[[ii]], newx = as.matrix(do.call(rbind,splt[ii])[,-11]),s="lambda.min",type="response"))# weird output here is because cross validation
+#you're seeing predictions for different values of lambda. we're supposed to pick an optimal value of lambda. typically picked with cross-validation.
+#
 
 #knn - m41. doesn't work. prediction for knn is weird
 #  no applicable method for 'predict' applied to an object of class "c('matrix', 'double', 'numeric')" 
