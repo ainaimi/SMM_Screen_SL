@@ -109,30 +109,35 @@ m50 <- lapply(1:folds, function(ii) KernelKnn(do.call(rbind,splt_knn[-ii])[,-196
 p1<-lapply(1:folds,function(ii) predict(m1[[ii]],newdata=rbindlist(splt[ii]),type="response"))
 #ranger - here, it's a list, with predictions in each list object: p2[[1]]$predictions
 p2<-lapply(1:folds,function(ii) predict(m2[[ii]],data=rbindlist(splt[ii])))
-#mean - m14. below doesn't work because mean is just a list of numbers. if this is just the mean in each fold, do we assign this mean value to every observation in each fold?
-p14 <- lapply(1:folds, function(ii) predict(m14[[ii]], data=rbindlist(splt[[ii]])))
 
-#glm: this also is a list of 10
-#I think the fitted values are already in here... 
+#mean - m14. below doesn't work because mean is just a list of numbers. assign mean value for every observation in each fold. 
+#folds 1-3 have 70 observations; folds 4-10 have 69 observations
+p14 <- lapply(1:folds, function(ii) rep(m14[[ii]], nrow(splt[[ii]])))
+
+#glm
 # I removed the double brackets from splt[[ii]] and now the command works... 
 p15 <- lapply(1:folds, function(ii) predict(m15[[ii]], data = rbindlist(splt[ii])))
 
-#gams - m16: also a list of 10
-# this also works with a single bracket for splt[ii], why?
-p16 <- lapply(1:folds, function(ii) predict(m16[[ii]], data = rbindlist(splt_splines[ii])))
+#gams - m16
+# per predict.Gam documentation, if I take out the data argument and just indicate type, this works. I don't know if the result makes sense, though.
+p16 <- lapply(1:folds, function(ii) predict(m16[[ii]], type="response"))
 
 #xgboost - m17, below doesn't work: Item 1 of input is not a data.frame, data.table, or list
 # single bracket around splt[ii] gets rid of that error but now: xgb.DMatrix does not support construction from list
 # putting as.matrix around the second argument fixes(?) that error, but now "feature names stored in 'object' and 'newdata' are different!
-# i need to make sure the names *and order* in the object and splt are the same... how?
-p17 <- lapply(1:folds, function(ii) predict(m17[[ii]], as.matrix(rbindlist(splt[ii])))) 
+# this is because of ch_smmtrue (outcome) in splt[[ii]]
+# i need to make sure the names *and order* in the object and splt are the same... remove column 11 and now it works 
+p17 <- lapply(1:folds, function(ii) predict(m17[[ii]], as.matrix(rbindlist(splt[ii])[,-11]))) 
 
 #glmnet - m35, below doesn't work: "need to supply a value for newx"
 # did the same thing as above because "newx" must be a matrix. Now: cholmod error 'X and/or Y have wrong dimensions'
-p44 <- lapply(1:folds, function(ii) predict(m44[[ii]], newx = as.matrix(rbindlist(splt[ii]))))
+# if I similarly take out column 11 from splt[[ii]], this also works 
+# now I don't understand the p44 object really...
+p44 <- lapply(1:folds, function(ii) predict(m44[[ii]], newx = as.matrix(rbindlist(splt[ii])[,-11])))
 
-#knn - m41. doesn't work. prediction for knn is weird 
-p50 <- lapply(1:folds, function(ii) predict(m50[[ii]], rbindlist(splt_knn[ii])))
+#knn - m41. doesn't work. prediction for knn is weird
+#  no applicable method for 'predict' applied to an object of class "c('matrix', 'double', 'numeric')" 
+p50 <- lapply(1:folds, function(ii) predict(m50[[ii]], newdata=rbindlist(splt_knn[ii])))
 
 # update dataframe 'splt' so that column1 is the observed outcome (y)
 #   column2 is the CV-predicted probability of the outcome from bayesglm
