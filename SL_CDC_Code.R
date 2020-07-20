@@ -319,7 +319,8 @@ a<-rbind(cbind("bayesglm",mean(do.call(rbind, risk2),na.rm=T)),
          cbind("cdc",mean(do.call(rbind,risk54), na.rm=T)))
 # output a table of the CV-risk estimates
 # xtable(a)
-
+# this is one part of "SuperLearner" output. How do we get 95% CI's around these so we can plot them nicely?
+saveRDS(a, "risks_momi.rds")
 
 #----------------------------
 ## 4: estimate SL weights using the optim() function to minimize (1-AUC)
@@ -345,15 +346,32 @@ SL.r<-function(A, y, par){
   predictions <- crossprod(t(A),par)
   cvRisk <- 1 - AUC(predictions = predictions, labels = y)
 }
-init=(rep(1/2,2))
+
+############################### Testing SL.r, delete when done ############################################################################################
+A <- as.matrix(X[,2:55])
+par <- rep(1/ncol(A), ncol(A))
+names(par) <- c("bayesglm","ranger1","ranger2","ranger3","ranger4","ranger5","ranger6","ranger7","ranger8",
+        "ranger9","ranger10","ranger11","ranger12","mean","glm","gams","xgboost1","xgboost2","xgboost3",
+        "xgboost4","xgboost5","xgboost6","xgboost7","xgboost8","xgboost9","xgboost10","xgboost11","xgboost12",
+        "xgboost13","xgboost14","xgboost15","xgboost16","xgboost17","xgboost18","xgboost19","xgboost20","xgboost21",
+        "xgboost22","xgboost23","xgboost24","xgboost25","xgboost26","xgboost27","glmnet1","glmnet2","glmnet3",
+        "glmnet4","glmnet5","glmnet6","knn1","knn2","knn3","knn4","cdc")
+predictions <- crossprod(t(A), par)
+auc_obj  <- AUC(predictions = predictions, labels = X[,1])
+cvRisk <- 1-auc_obj
+########################################################################################################################################################### 
+
+
+init <- rep(1/ncol(A), ncol(A))
 fit <- optim(par=init, fn=SL.r, A=X[,2:55], y=X[,1], 
              method="L-BFGS-B",lower=bounds[1],upper=bounds[2])
 fit
+
 alpha<-fit$par/sum(fit$par)
 alpha
 
 #---------------------
-## 5a: fit all algorithms to original data
+## 5a: fit all algorithms to NEW data
 m1<-bayesglm(formula=ch_smmtrue~.,data=D,family="binomial")
 m2<-ranger(ch_smmtrue~., data=D)
 
