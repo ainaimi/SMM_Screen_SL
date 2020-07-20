@@ -1,3 +1,68 @@
+
+# load the relevant packages
+packages <- c("dplyr","tidyverse","ggplot2","SuperLearner","VIM","recipes","resample","caret","SuperLearner",
+              "data.table","nnls","mvtnorm","ranger","xgboost","splines","Matrix","xtable","pROC","arm",
+              "polspline","ROCR","cvAUC", "KernelKnn", "gam","glmnet")
+for (package in packages) {
+  if (!require(package, character.only=T, quietly=T)) {
+    install.packages(package,repos='http://lib.stat.cmu.edu/R/CRAN') 
+  }
+}
+
+#Set working directory
+setwd("\\\\136.142.117.70\\Studies$\\Bodnar Abby\\Severe Maternal Morbidity\\Data")
+
+# Read data
+D <- readRDS("baked_train_momi_20200615.rds")
+
+# Modifying data to be able to share/reproduce
+D2 <- D %>% dplyr::select(c(ch_smmtrue, momage, anesth_re_No, anesth_re_Yes),
+                          starts_with("malpres"),
+                          starts_with("diab_"),
+                          starts_with("csecind"))
+D2$X1 <- rbinom(693, 693, 0.2)
+D2$X2 <- rbinom(693,693, 0.7)
+D2$X3 <- rbinom(693, 694, 0.35)
+D2$X4 <- rbinom(693,693, 0.6)
+
+D <- D2
+
+#shorten data? select more variables? not sure how to optimize this 
+
+# Specify the number of folds for V-fold cross-validation
+folds=5
+## split data into 5 groups for 5-fold cross-validation 
+## we do this here so that the exact same folds will be used in 
+## both the SL fit with the R package, and the hand coded SL
+index<-split(1:1000,1:folds)
+splt<-lapply(1:folds,function(ind) D[index[[ind]],])
+# view the first 6 observations in the first [[1]] and second [[2]] folds
+head(splt[[1]])
+head(splt[[2]])
+
+
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------
+# Hand-coding Super Learner
+#--------------------------------------------------------------------------------------------------------------------------------------------------------------
+## 1: split data into 10 groups for 10-fold cross-validation 
+splt<-split(D,1:folds)
+
+splt_splines <- split(D_splines, 1:folds)
+
+## 2: Fitting individual algorithms on the training set (but not the ii-th validation set)
+set.seed(123)
+#bayesglm
+m1<-lapply(1:folds,function(ii) bayesglm(formula=ch_smmtrue~.,data=do.call(rbind,splt[-ii]),family="binomial")) #bayesglm
+#glm
+m15 <- lapply(1:folds, function(ii) glm(ch_smmtrue~., data=do.call(rbind,splt[-ii]), family="binomial"))
+#gam
+m16 <- lapply(1:folds,function(ii) gam(ch_smmtrue~., family="binomial",data=rbindlist(splt_splines[-ii])))
+#glmnet
+m44 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0, family="binomial"))
+m49 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 1.0, family="binomial"))
+
+
+
 #SuperLearner source code for screen.corP
 screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
                         minPvalue = 0.1, minscreen = 2)
@@ -13,6 +78,11 @@ screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
   }
   return(whichVariable)
 }
+
+
+
+
+
 
 #SuperLearner source code for screen.corRank
 screen.corRank <- function(Y,X,family, method='pearson', rank=2){
