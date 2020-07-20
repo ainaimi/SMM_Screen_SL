@@ -9,10 +9,10 @@ for (package in packages) {
   }
 }
 
-#Set working directory
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#OPTION 1: USE REAL DATA WITH SOME SIMULATED COVARIATES----------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
 setwd("\\\\136.142.117.70\\Studies$\\Bodnar Abby\\Severe Maternal Morbidity\\Data")
-
-# Read data
 D <- readRDS("baked_train_momi_20200615.rds")
 
 # Modifying data to be able to share/reproduce
@@ -26,8 +26,43 @@ D2$X3 <- rbinom(693, 694, 0.35)
 D2$X4 <- rbinom(693,693, 0.6)
 
 D <- D2
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
 
-#shorten data? select more variables? not sure how to optimize this 
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+# Option 2: simulate data?----------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+n=10000
+sigma <- abs(matrix(runif(25,0,1), ncol=5))
+sigma <- forceSymmetric(sigma)
+sigma <- as.matrix(nearPD(sigma)$mat)
+x <- rmvnorm(n, mean=c(0,.25,.15,0,.1), sigma=sigma)
+modelMat<-model.matrix(as.formula(~ (x[,1]+x[,2]+x[,3]+x[,4]+x[,5])^3))
+beta<-runif(ncol(modelMat)-1,0,1)
+beta<-c(2,beta) # setting intercept
+mu <- 1-plogis(modelMat%*%beta) # true underlying risk of the outcome
+y<-rbinom(n,1,mu)
+
+hist(mu);mean(y)
+
+x<-data.frame(x)
+D<-data.frame(x,y)
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+# Specify the number of folds for V-fold cross-validation
+folds=5
+## split data into 5 groups for 5-fold cross-validation 
+## we do this here so that the exact same folds will be used in 
+## both the SL fit with the R package, and the hand coded SL
+index<-split(1:1000,1:folds)
+splt<-lapply(1:folds,function(ind) D[index[[ind]],])
+# view the first 6 observations in the first [[1]] and second [[2]] folds
+head(splt[[1]])
+head(splt[[2]])
 
 # Specify the number of folds for V-fold cross-validation
 folds=5
@@ -42,7 +77,7 @@ head(splt[[2]])
 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------
-# Hand-coding Super Learner
+# Hand-coding Super Learner -----------------------------------------------------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------
 ## 1: split data into 10 groups for 10-fold cross-validation 
 splt<-split(D,1:folds)
@@ -61,6 +96,9 @@ m16 <- lapply(1:folds,function(ii) gam(ch_smmtrue~., family="binomial",data=rbin
 m44 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0, family="binomial"))
 m49 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 1.0, family="binomial"))
 
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
 
 
 #SuperLearner source code for screen.corP
@@ -78,10 +116,6 @@ screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
   }
   return(whichVariable)
 }
-
-
-
-
 
 
 #SuperLearner source code for screen.corRank
