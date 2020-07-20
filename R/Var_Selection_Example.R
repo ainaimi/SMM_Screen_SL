@@ -26,11 +26,6 @@ hist(mu);mean(y)
 
 x<-data.frame(x)
 D<-data.frame(x,y)
-#-----------------------------------------------------------------------------------------------------------------------------------------------
-#-----------------------------------------------------------------------------------------------------------------------------------------------
-#-----------------------------------------------------------------------------------------------------------------------------------------------
-
-
 # Specify the number of folds for V-fold cross-validation
 folds=5
 ## split data into 5 groups for 5-fold cross-validation 
@@ -42,16 +37,37 @@ splt<-lapply(1:folds,function(ind) D[index[[ind]],])
 head(splt[[1]])
 head(splt[[2]])
 
-# Specify the number of folds for V-fold cross-validation
-folds=5
-## split data into 5 groups for 5-fold cross-validation 
-## we do this here so that the exact same folds will be used in 
-## both the SL fit with the R package, and the hand coded SL
-index<-split(1:1000,1:folds)
-splt<-lapply(1:folds,function(ind) D[index[[ind]],])
-# view the first 6 observations in the first [[1]] and second [[2]] folds
-head(splt[[1]])
-head(splt[[2]])
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+# Fitting the Superlearner: Original Version ---------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+
+# NO SCREENING
+sl.lib <- list("SL.mean", "SL.glmnet")
+fitY<-SuperLearner(Y=y,X=x,family="binomial",
+                   method="method.AUC",
+                   SL.library=sl.lib,
+                   cvControl=list(V=folds))
+fitY
+
+# WITH SCREENING
+sl.lib <- list("SL.mean", "SL.glmnet", c("SL.glmnet", "screen.corP"))
+fitY_scr<-SuperLearner(Y=y,X=x,family="binomial",
+                   method="method.AUC",
+                   SL.library=sl.lib,
+                   cvControl=list(V=folds))
+fitY_scr
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -60,29 +76,27 @@ head(splt[[2]])
 ## 1: split data into 10 groups for 10-fold cross-validation 
 splt<-split(D,1:folds)
 
-splt_splines <- split(D_splines, 1:folds)
-
 ## 2: Fitting individual algorithms on the training set (but not the ii-th validation set)
 set.seed(123)
 #bayesglm
-m1<-lapply(1:folds,function(ii) bayesglm(formula=ch_smmtrue~.,data=do.call(rbind,splt[-ii]),family="binomial")) #bayesglm
+m1<-lapply(1:folds,function(ii) bayesglm(formula=y~.,data=do.call(rbind,splt[-ii]),family="binomial")) #bayesglm
 #glm
-m15 <- lapply(1:folds, function(ii) glm(ch_smmtrue~., data=do.call(rbind,splt[-ii]), family="binomial"))
+m15 <- lapply(1:folds, function(ii) glm(y~., data=do.call(rbind,splt[-ii]), family="binomial"))
 #gam
-m16 <- lapply(1:folds,function(ii) gam(ch_smmtrue~., family="binomial",data=rbindlist(splt_splines[-ii])))
+m16 <- lapply(1:folds,function(ii) gam(y~., family="binomial",data=rbindlist(splt[-ii])))
 #glmnet
-m44 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 0, family="binomial"))
-m49 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-11]), as.matrix(do.call(rbind,splt[-ii])[,11]), alpha = 1.0, family="binomial"))
+m44 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-6]), as.matrix(do.call(rbind,splt[-ii])[,6]), alpha = 0, family="binomial"))
+m49 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-6]), as.matrix(do.call(rbind,splt[-ii])[,6]), alpha = 1.0, family="binomial"))
 
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------------------------------------------------
+
 
 
 #SuperLearner source code for screen.corP
 screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
-                        minPvalue = 0.1, minscreen = 2)
-{
+                        minPvalue = 0.1, minscreen = 2){
   listp <- apply(X, 2, function(x, Y, method) {
     ifelse(var(x) <= 0, 1, cor.test(x, y=Y, method = method)$p.value)
   },
@@ -95,6 +109,9 @@ screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
   return(whichVariable)
 }
 
+## playing around: can i get this to run independentely in the D dataset above?
+screen.corP(Y=D$y,X=D[,-6])
+
 
 #SuperLearner source code for screen.corRank
 screen.corRank <- function(Y,X,family, method='pearson', rank=2){
@@ -105,25 +122,6 @@ screen.corRank <- function(Y,X,family, method='pearson', rank=2){
   return(whichVariable)
 }
 
-
-#SuperLearner source code for screen.randomForest
-screen.randomForest <- function(Y, X, family, nVar = 10, ntree = 1000, 
-                                mtry = ifelse(family$family == "gaussian", floor(sqrt(ncol(X))),
-                                              max(floor(ncol(X)/3), 1)),
-                                nodesize = ifelse(family$family == "gaussian",5,1), maxnodes = NULL){
-  .SL.require('randomForest')
-  if(family$family == "gaussian"){
-    rank.rf.fit <- randomForest::randomForest(Y~., data = X, ntree = ntree, mtry = mtry, 
-                                              nodesize = nodesize, keep.forest = FALSE,
-                                              maxnodes = maxnodes)
-  }
-  if(family$family == "binomial"){
-    rank.rf.fit <- randomForest::randomForest(as.factor(Y)~., data = X,
-                                              ntree = ntree, mtry = mtry,
-                                              nodesize = nodesize, keep.forest = FALSE,
-                                              maxnodes = maxnodes)
-  }
-  whichVariable <- (rank(-rank.rf.fit$imporance)<=nVar)
-  return(whichVariable)
-}
+## playing around: can i get this to run independentely in the D dataset above?
+screen.corRank(Y=D$y,X=D[,-6])
 
