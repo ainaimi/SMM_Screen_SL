@@ -9,7 +9,7 @@ for (package in packages) {
 }
 
 #-----------------------------------------------------------------------------------------------------------------------------------------------
-# Option 2: simulate data?----------------------------------------------------------------------------------------------------------------------
+# SIMULATE DATA ----------------------------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 set.seed(123)
 n=1000
@@ -29,10 +29,24 @@ x<-data.frame(x)
 D<-data.frame(x,y)
 # Specify the number of folds for V-fold cross-validation
 folds=5
+index<-split(1:1000,1:folds)
+
+# Trying screen.corRank
+screen.corRank <- function (Y, X, family, method = "pearson", rank = 2, ...) 
+{
+  listp <- apply(X, 2, function(x, Y, method) {
+    ifelse(var(x) <= 0, 1, cor.test(x, y = Y, method = method)$p.value)
+  }, Y = Y, method = method)
+  whichVariable <- (rank(listp) <= rank)
+  return(whichVariable)
+}
+# And creating a logical vector indicating which variables to select 
+whichVariable <-  screen.corRank(Y=D$y, X=D[,-6])
+
+
 ## split data into 5 groups for 5-fold cross-validation 
 ## we do this here so that the exact same folds will be used in 
 ## both the SL fit with the R package, and the hand coded SL
-index<-split(1:1000,1:folds)
 splt<-lapply(1:folds,function(ind) D[index[[ind]],])
 # view the first 6 observations in the first [[1]] and second [[2]] folds
 head(splt[[1]])
@@ -47,83 +61,105 @@ head(splt[[2]])
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 
 # NO SCREENING
-sl.lib <- list("SL.mean", "SL.glmnet")
-fitY<-SuperLearner(Y=y,X=x,family="binomial",
-                   method="method.AUC",
-                   SL.library=sl.lib,
-                   cvControl=list(V=folds))
-fitY
+set.seed(123)
+SL.glmnet_new <- create.Learner("SL.glmnet",params=list(nfolds=200))
+
+sl.lib <- list("SL.mean", SL.glmnet_new$names)
+SLfitY<-SuperLearner(Y=y,X=x,family="binomial",
+                     method="method.AUC",
+                     SL.library=sl.lib,
+                     cvControl=list(V=folds, validRows=index))
+SLfitY
+
+SLfitY$Z[,2]
 
 # WITH SCREENING
+set.seed(123)
 sl.lib <- list("SL.mean", "SL.glmnet", c("SL.glmnet", "screen.corRank"))
-fitY_scr<-SuperLearner(Y=y,X=x,family="binomial",
-                   method="method.AUC",
-                   SL.library=sl.lib,
-                   cvControl=list(V=folds))
-fitY_scr
-fitY_scr$whichScreen
+SLfitY_scr<-SuperLearner(Y=y,X=x,family="binomial",
+                         method="method.AUC",
+                         SL.library=sl.lib,
+                         cvControl=list(V=folds, validRows=index))
+SLfitY_scr
+SLfitY_scr$whichScreen
+
+#this is picking the same variables as the screening function done by hand 
+
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------------------------------------------------
-
-
-
-
-
 
 
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------
 # Hand-coding Super Learner -----------------------------------------------------------------------------------------------------------------------------------
 #--------------------------------------------------------------------------------------------------------------------------------------------------------------
-## 1: split data into 10 groups for 10-fold cross-validation 
-splt<-split(D,1:folds)
-
-## 2: Fitting individual algorithms on the training set (but not the ii-th validation set)
+###########  Fitting individual algorithms on the training set (but not the ii-th validation set) ########### 
+m1 <- lapply(1:folds,function(ii) weighted.mean(rbindlist(splt[-ii])$y)) #mean - SL function uses weighted.mean
 set.seed(123)
-#bayesglm
-m1<-lapply(1:folds,function(ii) bayesglm(formula=y~.,data=do.call(rbind,splt[-ii]),family="binomial")) #bayesglm
-#glm
-m15 <- lapply(1:folds, function(ii) glm(y~., data=do.call(rbind,splt[-ii]), family="binomial"))
-#gam
-m16 <- lapply(1:folds,function(ii) gam(y~., family="binomial",data=rbindlist(splt[-ii])))
-#glmnet
-m44 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-6]), as.matrix(do.call(rbind,splt[-ii])[,6]), alpha = 0, family="binomial"))
-m49 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-6]), as.matrix(do.call(rbind,splt[-ii])[,6]), alpha = 1.0, family="binomial"))
-
-#-----------------------------------------------------------------------------------------------------------------------------------------------
-#-----------------------------------------------------------------------------------------------------------------------------------------------
-#-----------------------------------------------------------------------------------------------------------------------------------------------
+m2 <- lapply(1:folds, function(ii) cv.glmnet(model.matrix(~-1 + ., do.call(rbind,splt[-ii])[,-6]), 
+                                             do.call(rbind,splt[-ii])[,6], lambda=NULL, 
+                                             nlambda = 100, type.measure="deviance", nfolds=200, family="binomial", alpha=1)) #glmnet
+#glmnet with screen.corRank
+# subset first to remove the outcome variable (position 6), then to select just those variables with TRUE in whichVariable
+m3 <- lapply(1:folds, function(ii) cv.glmnet(as.matrix(do.call(rbind,splt[-ii])[,-6][,whichVariable]),
+                                             as.matrix(do.call(rbind,splt[-ii])[,6]), nfolds=10, family="binomial", alpha=1))
 
 
+########### Predict ########### 
+p1 <- lapply(1:folds, function(ii) rep(m1[[ii]], nrow(splt[[ii]])))
+set.seed(123)
+p2 <- lapply(1:folds, function(ii) predict(m2[[ii]], newx = model.matrix(~-1 + ., do.call(rbind,splt[ii])[,-6]), s="lambda.min", type="response"))
 
-#SuperLearner source code for screen.corP
-screen.corP <- function(Y, X, family, obsWeights, id, method = 'pearson',
-                        minPvalue = 0.1, minscreen = 2){
-  listp <- apply(X, 2, function(x, Y, method) {
-    ifelse(var(x) <= 0, 1, cor.test(x, y=Y, method = method)$p.value)
-  },
-  Y = Y, method = method)
-  whichVariable <- (listp<= minPvalue)
-  if(sum(whichVariable)<minscreen){
-    warning('number of variables with p value less than minPvalue is less than minscreen')
-    whichVariable[rank(listp)<=minscreen] <- TRUE
-  }
-  return(whichVariable)
+cbind(sort(SLfitY$Z[,2]),sort(as.numeric(do.call(rbind,p2))),round(sort(SLfitY$Z[,2])-sort(as.numeric(do.call(rbind,p2))),4))
+
+
+head(sort(SLfitY$Z[,2]))
+head(sort(as.numeric(do.call(rbind,p2))))
+
+p3 <- lapply(1:folds, function(ii) predict(m3[[ii]], newx = as.matrix(do.call(rbind,splt[ii])[,-6][,whichVariable]), s="lambda.min", type="response"))
+
+############  update dataframe 'splt' so that column1 is the observed outcome (y) and subsequent columns contain predictions above ########### 
+for(i in 1:folds){
+  splt[[i]]<-cbind(splt[[i]][,6], p1[[i]], p2[[i]], p3[[i]])
 }
 
-## playing around: can i get this to run independentely in the D dataset above?
-screen.corP(Y=D$y,X=D[,-6])
+########### View the first 6 observations in the first fold ########### 
+head(data.frame(splt[[1]]))
 
+########### CV risk ########### 
+risk1<-lapply(1:folds,function(ii) 1-AUC(predictions=splt[[ii]][,2], labels=splt[[ii]][,1]))    # CV-risk for mean
+risk2 <- lapply(1:folds, function(ii) 1-AUC(predictions=splt[[ii]][,3], labels=splt[[i]][,1]))  # CV-risk for glmnet all
+risk3 <- lapply(1:folds, function(ii) 1-AUC(predictions=splt[[ii]][,4], labels=splt[[i]][,1]))  # CV-risk for glmnet screen corRank
 
-#SuperLearner source code for screen.corRank
-screen.corRank <- function(Y,X,family, method='pearson', rank=2){
-  listp <- apply(X,2,function(x,Y,method){
-    ifelse(var(x) <= 0, 1, cor.test(x,y=Y, method = method)$p.value)
-  }, Y=Y, method=method)
-  whichVariable <- (rank(listp)<= rank)
-  return(whichVariable)
+a<-rbind(cbind("mean",mean(do.call(rbind, risk1),na.rm=T)),
+         cbind("glmnet",mean(do.call(rbind, risk2),na.rm=T)),
+         cbind("glmnet_select",mean(do.call(rbind,risk3), na.rm=T)))
+
+########### Predictions for metalearner ########### 
+X<-data.frame(do.call(rbind,splt),row.names=NULL);  names(X)<-c("y","AC.mean","AC.glmnet_All","AC.glmnet_screen.corRank")
+head(X)
+
+bounds = c(0, Inf)
+SL.r<-function(A, y, par){
+  A<-as.matrix(A)
+  names(par)<-c("AC.mean","AC.glmnet_All","AC.glmnet_screen.corRank")
+  predictions <- crossprod(t(A),par)
+  cvRisk <- 1 - AUC(predictions = predictions, labels = y)
 }
 
-## playing around: can i get this to run independentely in the D dataset above?
-screen.corRank(Y=D$y,X=D[,-6])
+init <- rep(1/3, 3)
+fit <- optim(par=init, fn=SL.r, A=X[,2:4], y=X[,1], 
+             method="L-BFGS-B",lower=bounds[1],upper=bounds[2])
+fit
 
+alpha<-fit$par/sum(fit$par)
+alpha
+
+# Coefficients do NOT agree between SuperLearner and hand-coded
+SLfitY_scr
+alpha
+a
+
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------------------------------------------------
